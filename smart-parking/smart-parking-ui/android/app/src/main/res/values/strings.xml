@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SmartParking</string>
+    <string name="title_activity_main">SmartParking</string>
+    <string name="package_name">com.aktan.parking</string>
+    <string name="custom_url_scheme">com.aktan.parking</string>
+</resources>
