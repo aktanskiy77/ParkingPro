@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Парковка Pro - Кассир с камерой</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #002347;
+            color: white;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .header h1 { font-size: 28px; margin-bottom: 5px; }
+        .header p { color: #ffffff80; font-size: 14px; }
+        .card {
+            background: #0f2e5a;
+            border-radius: 24px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .camera-container {
+            width: 100%;
+            margin-bottom: 20px;
+            text-align: center;
+            position: relative;
+        }
+        video {
+            width: 100%;
+            border-radius: 16px;
+            background: #001a38;
+            transform: scaleX(-1);
+        }
+        canvas {
+            display: none;
+        }
+        .capture-btn {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            border: none;
+            padding: 16px;
+            border-radius: 16px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-bottom: 20px;
+            width: 100%;
+        }
+        .capture-btn:active {
+            transform: scale(0.98);
+        }
+        .plate-input {
+            width: 100%;
+            background: #001a38;
+            border: none;
+            padding: 16px;
+            border-radius: 16px;
+            color: white;
+            font-size: 20px;
+            text-align: center;
+            letter-spacing: 3px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            outline: none;
+        }
+        .plate-input:focus {
+            border: 1px solid #4da3ff;
+        }
+        .register-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #1a6fd4, #0d4fa0);
+            color: white;
+            border: none;
+            padding: 16px;
+            border-radius: 16px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .register-btn:active {
+            transform: scale(0.98);
+        }
+        .message {
+            text-align: center;
+            padding: 12px;
+            border-radius: 12px;
+            margin-top: 15px;
+            font-size: 14px;
+        }
+        .success { background: #10b98130; color: #10b981; }
+        .error { background: #ef444430; color: #ef4444; }
+        .info { background: #4da3ff30; color: #4da3ff; }
+        .preview-img {
+            width: 100%;
+            border-radius: 16px;
+            margin-top: 10px;
+            display: none;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .recent {
+            margin-top: 20px;
+        }
+        .recent h3 {
+            font-size: 14px;
+            color: #ffffff80;
+            margin-bottom: 10px;
+        }
+        .recent-item {
+            background: #001a38;
+            padding: 12px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .recent-plate {
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .recent-time {
+            font-size: 11px;
+            color: #ffffff60;
+        }
+        .footer {
+            text-align: center;
+            color: #ffffff40;
+            font-size: 11px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚗 Парковка Pro</h1>
+        <p>Кассир - фоткаем номер</p>
+    </div>
+
+    <div class="card">
+        <div class="camera-container">
+            <video id="camera" autoplay playsinline muted></video>
+            <canvas id="canvas"></canvas>
+        </div>
+        
+        <button id="captureBtn" class="capture-btn">📸 Сфоткать номер</button>
+        
+        <input type="text" id="plateNumber" class="plate-input" placeholder="Или введите номер вручную" autocomplete="off">
+        
+        <button id="registerBtn" class="register-btn">✅ Зарегистрировать въезд</button>
+        
+        <div id="message" class="message"></div>
+    </div>
+
+    <div class="recent" id="recentPanel">
+        <h3>📋 Сейчас на парковке</h3>
+        <div id="recentList">Загрузка...</div>
+    </div>
+
+    <div class="footer">
+        Наведите камеру на госномер, нажмите "Сфоткать"
+    </div>
+
+    <script>
+        let stream = null;
+        let currentPhoto = null;
+        let isProcessing = false;
+
+        // Запуск камеры
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                });
+                const video = document.getElementById('camera');
+                video.srcObject = stream;
+            } catch (err) {
+                console.error('Ошибка камеры:', err);
+                showMessage('❌ Не удалось получить доступ к камере', 'error');
+            }
+        }
+
+        // Фото
+        async function capturePhoto() {
+            if (isProcessing) return;
+            isProcessing = true;
+            
+            const video = document.getElementById('camera');
+            const canvas = document.getElementById('canvas');
+            const context = canvas.getContext('2d');
+            
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            const imageData = canvas.toDataURL('image/jpeg', 0.9);
+            currentPhoto = imageData;
+            
+            showMessage('🔍 Распознаю номер...', 'info');
+            
+            await recognizePlate(imageData);
+            isProcessing = false;
+        }
+
+        // Распознавание номера
+        async function recognizePlate(imageData) {
+            // Загружаем Tesseract если ещё не загружен
+            if (typeof Tesseract === 'undefined') {
+                showMessage('📦 Загрузка движка распознавания...', 'info');
+                await loadTesseract();
+            }
+            
+            try {
+                showMessage('🔍 Анализируем фото...', 'info');
+                
+                const result = await Tesseract.recognize(
+                    imageData,
+                    'eng',
+                    {
+                        logger: m => {
+                            if (m.status === 'recognizing text') {
+                                // Показываем прогресс
+                                if (m.progress % 0.2 === 0) {
+                                    showMessage(`🔍 Распознавание: ${Math.round(m.progress * 100)}%`, 'info');
+                                }
+                            }
+                        },
+                        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+                    }
+                );
+                
+                const text = result.data.text;
+                console.log('Распознанный текст:', text);
+                
+                const plate = extractPlateNumber(text);
+                
+                if (plate) {
+                    document.getElementById('plateNumber').value = plate;
+                    showMessage(`✅ Распознан номер: ${plate}`, 'success');
+                    // Автоматически регистрируем через 1 секунду
+                    setTimeout(() => {
+                        registerEntry();
+                    }, 1000);
+                } else {
+                    showMessage('❌ Не удалось распознать номер. Введите вручную.', 'error');
+                }
+            } catch (error) {
+                console.error('OCR ошибка:', error);
+                showMessage('❌ Ошибка распознавания', 'error');
+            }
+        }
+
+        // Извлечение номера из текста
+        function extractPlateNumber(text) {
+            // Паттерны для номеров Кыргызстана
+            const patterns = [
+                /(\d{2}[A-Z]{2}\d{3})/i,           // 01KG777
+                /(\d{2}[A-Z]{2}\d{4})/i,           // 01KG7777
+                /(\d{2}[A-Z]{2}\d{5})/i,           // 01KG77777
+                /(\d{2}\s?[A-Z]{2}\s?\d{3})/i,     // 01 KG 777
+                /(\d{2}\s?[A-Z]{2}\s?\d{4})/i,     // 01 KG 7777
+                /([A-Z0-9]{6,10})/i                 // Любая комбинация 6-10 символов
+            ];
+            
+            for (const pattern of patterns) {
+                const match = text.match(pattern);
+                if (match) {
+                    let plate = match[1].toUpperCase().replace(/\s/g, '');
+                    // Убираем возможные лишние символы
+                    plate = plate.replace(/[^A-Z0-9]/g, '');
+                    if (plate.length >= 6 && plate.length <= 10) {
+                        return plate;
+                    }
+                }
+            }
+            return null;
+        }
+
+        // Загрузка Tesseract.js
+        function loadTesseract() {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+                script.onload = () => {
+                    showMessage('✅ Движок загружен', 'success');
+                    setTimeout(() => resolve(), 500);
+                };
+                script.onerror = () => {
+                    showMessage('❌ Ошибка загрузки распознавания', 'error');
+                    reject();
+                };
+                document.head.appendChild(script);
+            });
+        }
+
+        // Регистрация въезда
+        async function registerEntry() {
+            const plateNumber = document.getElementById('plateNumber').value.trim().toUpperCase();
+            
+            if (!plateNumber) {
+                showMessage('❌ Введите номер машины', 'error');
+                return;
+            }
+            
+            // Проверка формата номера
+            if (plateNumber.length < 5 || plateNumber.length > 10) {
+                showMessage('❌ Неверный формат номера', 'error');
+                return;
+            }
+            
+            showMessage('⏳ Отправка на сервер...', 'info');
+            
+            try {
+                const response = await fetch('/api/entry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plate_number: plateNumber,
+                        photo_base64: currentPhoto || 'from_web'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showMessage(`✅ ${plateNumber} зарегистрирован(а)!`, 'success');
+                    document.getElementById('plateNumber').value = '';
+                    currentPhoto = null;
+                    loadRecent();
+                    
+                    // Автоматически делаем новое фото через 2 секунды
+                    setTimeout(() => {
+                        document.getElementById('plateNumber').focus();
+                    }, 2000);
+                } else {
+                    showMessage(`❌ Ошибка: ${data.error || 'Неизвестная ошибка'}`, 'error');
+                }
+            } catch (error) {
+                console.error('Ошибка:', error);
+                showMessage('❌ Ошибка подключения к серверу', 'error');
+            }
+        }
+
+        // Загрузка активных машин
+        async function loadRecent() {
+            try {
+                const response = await fetch('/api/active');
+                const cars = await response.json();
+                
+                const recentList = document.getElementById('recentList');
+                if (!cars || cars.length === 0) {
+                    recentList.innerHTML = '<div style="text-align: center; color: #ffffff60; padding: 15px;">🚫 Нет машин на парковке</div>';
+                    return;
+                }
+                
+                recentList.innerHTML = cars.slice(0, 5).map(car => {
+                    const entryDate = new Date(car.entry_time);
+                    return `
+                        <div class="recent-item">
+                            <div>
+                                <div class="recent-plate">${escapeHtml(car.plate_number)}</div>
+                                <div class="recent-time">Заехал: ${entryDate.toLocaleTimeString()}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Ошибка загрузки:', error);
+                document.getElementById('recentList').innerHTML = '<div style="text-align: center; color: #ffffff60; padding: 15px;">❌ Ошибка загрузки</div>';
+            }
+        }
+
+        function showMessage(text, type) {
+            const msgDiv = document.getElementById('message');
+            msgDiv.textContent = text;
+            msgDiv.className = `message ${type}`;
+            
+            if (type !== 'info') {
+                setTimeout(() => {
+                    if (msgDiv.textContent === text) {
+                        msgDiv.textContent = '';
+                        msgDiv.className = 'message';
+                    }
+                }, 3000);
+            }
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&<>]/g, function(m) {
+                if (m === '&') return '&amp;';
+                if (m === '<') return '&lt;';
+                if (m === '>') return '&gt;';
+                return m;
+            });
+        }
+
+        // Ввод номера вручную по нажатию Enter
+        document.addEventListener('DOMContentLoaded', () => {
+            startCamera();
+            loadRecent();
+            
+            const plateInput = document.getElementById('plateNumber');
+            plateInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    registerEntry();
+                }
+            });
+        });
+        
+        // Кнопки
+        document.getElementById('captureBtn').onclick = capturePhoto;
+        document.getElementById('registerBtn').onclick = registerEntry;
+        
+        // Обновляем список каждые 10 секунд
+        setInterval(loadRecent, 10000);
+    </script>
+</body>
+</html>
